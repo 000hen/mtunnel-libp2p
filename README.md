@@ -43,7 +43,7 @@ Both roles use the same binary. Omitting the `-token` flag starts host mode; pro
 
 ```powershell
 # Listen on an ephemeral local port; connect using the provided token
-./unnel.exe -token <PASTE-TOKEN> -port 0
+./tunnel.exe -token <PASTE-TOKEN> -port 0
 ```
 
 - `-port` is the local listener port. Set `0` to let the OS pick a free port (the program prints the chosen port).
