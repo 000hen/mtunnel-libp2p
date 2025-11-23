@@ -21,10 +21,6 @@ func runHost(host host.Host, networkType string, forwardPort int) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	session := NewSessionManager(host.Network())
-	host.Network().Notify(&ConnListener{
-		sm: session,
-	})
-
 	idht, err := setupDHT(ctx, host, true)
 	if err != nil {
 		cancel()
