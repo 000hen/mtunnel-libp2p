@@ -19,9 +19,10 @@ func main() {
 
 	flag.Parse()
 
+	h := initializePeer()
 	if *token == "" {
-		runHost(*network, *port)
+		runHost(h, *network, *port)
 	} else {
-		runClient(*token, *port)
+		runClient(h, *token, *port)
 	}
 }

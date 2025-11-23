@@ -13,41 +13,22 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/libp2p/go-libp2p"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 )
 
-func runHost(networkType string, forwardPort int) {
+func runHost(host host.Host, networkType string, forwardPort int) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	h, err := libp2p.New(
-		libp2p.EnableHolePunching(),
-		libp2p.EnableAutoRelayWithStaticRelays(dht.GetDefaultBootstrapPeerAddrInfos()),
-		libp2p.EnableRelay(),
-		libp2p.NATPortMap(),
-		libp2p.EnableAutoNATv2(),
-		libp2p.EnableNATService(),
-		libp2p.ForceReachabilityPrivate(),
-	)
-	if err != nil {
-		sendOutputAction(OutputAction{
-			Action: ERROR,
-			Error:  fmt.Sprintf("Failed to create libp2p host: %v", err),
-		})
-		log.Fatalf("Failed to create libp2p host: %v", err)
-	}
-
-	session := NewSessionManager(h.Network())
-
-	h.Network().Notify(&ConnListener{
+	session := NewSessionManager(host.Network())
+	host.Network().Notify(&ConnListener{
 		sm: session,
 	})
 
-	idht, err := setupDHT(ctx, h, true)
+	idht, err := setupDHT(ctx, host, true)
 	if err != nil {
 		cancel()
-		_ = h.Close()
+		_ = host.Close()
 		sendOutputAction(OutputAction{
 			Action: ERROR,
 			Error:  fmt.Sprintf("Failed to create DHT: %v", err),
@@ -58,15 +39,14 @@ func runHost(networkType string, forwardPort int) {
 	log.Println("Waiting for network stabilization...")
 	time.Sleep(20 * time.Second)
 
-	log.Println("Libp2p host created with ID:", h.ID())
 	log.Println("Listening on addresses:")
-	for _, addr := range h.Addrs() {
+	for _, addr := range host.Addrs() {
 		log.Println(" - ", addr.String())
 	}
 
 	token := ConnToken{
 		Network: networkType,
-		ID:      h.ID(),
+		ID:      host.ID(),
 	}
 
 	var buf bytes.Buffer
@@ -90,13 +70,10 @@ func runHost(networkType string, forwardPort int) {
 	cleanup := func(exitCode int) {
 		cancel()
 		session.ForceCloseAllSessions()
-		if idht != nil {
-			if err := idht.Close(); err != nil {
-				log.Printf("Error closing DHT: %v", err)
-			}
-			idht = nil
+		if err := idht.Close(); err != nil {
+			log.Printf("Error closing DHT: %v", err)
 		}
-		if err := h.Close(); err != nil {
+		if err := host.Close(); err != nil {
 			log.Printf("Error closing libp2p host: %v", err)
 		}
 		os.Exit(exitCode)
@@ -106,7 +83,7 @@ func runHost(networkType string, forwardPort int) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	h.SetStreamHandler("/mtunnel/1.0.0", func(s network.Stream) {
+	host.SetStreamHandler("/mtunnel/1.0.0", func(s network.Stream) {
 		session.AddSession(s.Conn().RemotePeer(), s.Conn())
 		handleStream(s, networkType, forwardPort)
 		session.RemoveSession(s.Conn().RemotePeer())

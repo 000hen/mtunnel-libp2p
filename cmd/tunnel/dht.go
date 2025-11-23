@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/routing"
 )
 
 func setupDHT(ctx context.Context, h host.Host, asServer bool) (*dht.IpfsDHT, error) {
@@ -50,4 +53,21 @@ func connectToBootstrapPeers(ctx context.Context, h host.Host) error {
 	}
 
 	return nil
+}
+
+func findPeerInDHT(ctx context.Context, dhtInstance *dht.IpfsDHT, peerID peer.ID) peer.AddrInfo {
+	info, findErr := dhtInstance.FindPeer(ctx, peerID)
+	if findErr == nil {
+		log.Printf("Discovered peer %s via DHT with %d addresses", info.ID, len(info.Addrs))
+		log.Println("Addresses found via DHT:")
+		for _, a := range info.Addrs {
+			log.Println(" -", a.String())
+		}
+	} else if errors.Is(findErr, routing.ErrNotFound) {
+		log.Fatalf("Peer %s not yet available in DHT", peerID)
+	} else {
+		log.Fatalf("DHT lookup for peer %s failed: %v", peerID, findErr)
+	}
+
+	return info
 }
