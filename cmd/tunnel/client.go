@@ -11,10 +11,12 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 func runClient(host host.Host, token string, localPort int) {
@@ -43,14 +45,18 @@ func runClient(host host.Host, token string, localPort int) {
 	info := findPeerInDHT(dhtCtx, clientDHT, decodedToken.ID)
 	dhtCancel()
 
+	var cleanupOnce sync.Once
 	cleanupTransport := func() {
-		if err := clientDHT.Close(); err != nil {
-			log.Printf("Error closing DHT: %v", err)
-		}
-		if err := host.Close(); err != nil {
-			log.Printf("Error closing libp2p host: %v", err)
-		}
+		cleanupOnce.Do(func() {
+			if err := clientDHT.Close(); err != nil {
+				log.Printf("Error closing DHT: %v", err)
+			}
+			if err := host.Close(); err != nil {
+				log.Printf("Error closing libp2p host: %v", err)
+			}
+		})
 	}
+	defer cleanupTransport()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := connectToPeer(ctx, host, info); err != nil {
@@ -58,6 +64,7 @@ func runClient(host host.Host, token string, localPort int) {
 			Action: ERROR,
 			Error:  fmt.Sprintf("Failed to connect to peer %s: %v", decodedToken.ID, err),
 		})
+		cleanupTransport()
 		log.Fatalf("Failed to connect to peer %s: %v", decodedToken.ID, err)
 	}
 
@@ -68,7 +75,7 @@ func runClient(host host.Host, token string, localPort int) {
 	}
 	defer listen.Close()
 
-	log.Printf("Listening for local connections on %s\n", listen.Addr().String())
+	log.Printf("Listening for local connections on %s", listen.Addr().String())
 
 	port := listen.Addr().(*net.TCPAddr).Port
 	sendOutputAction(OutputAction{
@@ -90,7 +97,6 @@ func runClient(host host.Host, token string, localPort int) {
 		log.Println("Stopping local listener...")
 		listen.Close()
 		cleanupTransport()
-		cancel()
 	}()
 
 	go func() {
@@ -98,7 +104,6 @@ func runClient(host host.Host, token string, localPort int) {
 		log.Printf("Received signal: %v", sig)
 		log.Println("Initiating graceful shutdown...")
 		cancel()
-		os.Exit(0)
 	}()
 
 	for {
@@ -106,7 +111,6 @@ func runClient(host host.Host, token string, localPort int) {
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				log.Println("Local listener closed, exiting...")
-				cleanupTransport()
 				return
 			}
 
@@ -114,18 +118,25 @@ func runClient(host host.Host, token string, localPort int) {
 			continue
 		}
 
-		streamCtx, streamCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer streamCancel()
-
-		s, err := host.NewStream(streamCtx, decodedToken.ID, "/mtunnel/1.0.0")
-		if err != nil {
-			log.Printf("Failed to open stream to peer %s: %v", decodedToken.ID, err)
-			localConn.Close()
-			continue
-		}
-
-		log.Printf("Opened stream to peer %s\n", decodedToken.ID)
-		pipe(s, localConn)
-		log.Printf("Closed stream to peer %s\n", decodedToken.ID)
+		go handleClientStream(ctx, host, decodedToken.ID, localConn)
 	}
+}
+
+func handleClientStream(ctx context.Context, host host.Host, peer peer.ID, conn net.Conn) {
+	streamCtx, streamCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer streamCancel()
+
+	s, err := host.NewStream(streamCtx, peer, protocolID)
+	if err != nil {
+		log.Printf("Failed to open stream to peer %s: %v", peer, err)
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("Error closing local connection: %v", closeErr)
+		}
+		return
+	}
+	defer s.Close()
+
+	log.Printf("Opened stream to peer %s", peer)
+	pipe(s, conn)
+	log.Printf("Closed stream to peer %s", peer)
 }

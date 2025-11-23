@@ -37,7 +37,7 @@ func runHost(host host.Host, networkType string, forwardPort int) {
 	}
 
 	log.Println("Waiting for network stabilization...")
-	time.Sleep(20 * time.Second)
+	time.Sleep(networkStabilizationDelay)
 
 	log.Println("Listening on addresses:")
 	for _, addr := range host.Addrs() {
@@ -83,7 +83,7 @@ func runHost(host host.Host, networkType string, forwardPort int) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	host.SetStreamHandler("/mtunnel/1.0.0", func(s network.Stream) {
+	host.SetStreamHandler(protocolID, func(s network.Stream) {
 		session.AddSession(s.Conn().RemotePeer(), s.Conn())
 		handleStream(s, networkType, forwardPort)
 		session.RemoveSession(s.Conn().RemotePeer())
@@ -100,15 +100,14 @@ func handleStream(s network.Stream, network string, forwardPort int) {
 	defer s.Close()
 
 	addr := fmt.Sprintf("localhost:%d", forwardPort)
-	localConn, err := net.Dial(network, addr)
+	localConn, err := net.DialTimeout(network, addr, defaultLocalDialTimeout)
 	if err != nil {
 		log.Printf("Failed to connect to local service on %s: %v", addr, err)
-		s.Close()
 		return
 	}
 	defer localConn.Close()
 
-	log.Printf("Connected to local service on %s\n", addr)
+	log.Printf("Connected to local service on %s", addr)
 
 	pipe(s, localConn)
 	log.Println("Stream closed for peer:", s.Conn().RemotePeer())
