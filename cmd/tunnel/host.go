@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ func runHost(host host.Host, networkType string, forwardPort int) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	session := NewSessionManager(host.Network())
+
 	idht, err := setupDHT(ctx, host, true)
 	if err != nil {
 		cancel()
@@ -63,32 +65,53 @@ func runHost(host host.Host, networkType string, forwardPort int) {
 		Token:  encodedToken,
 	})
 
-	cleanup := func(exitCode int) {
-		cancel()
-		session.ForceCloseAllSessions()
-		if err := idht.Close(); err != nil {
-			log.Printf("Error closing DHT: %v", err)
-		}
-		if err := host.Close(); err != nil {
-			log.Printf("Error closing libp2p host: %v", err)
-		}
-		os.Exit(exitCode)
+	var cleanupOnce sync.Once
+	var wg sync.WaitGroup
+
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			log.Println("Cleaning up...")
+			cancel()
+			session.ForceCloseAllSessions()
+			wg.Wait()
+
+			if err := idht.Close(); err != nil {
+				log.Printf("Error closing DHT: %v", err)
+			}
+			if err := host.Close(); err != nil {
+				log.Printf("Error closing libp2p host: %v", err)
+			}
+		})
 	}
-	go handleIOAction(session)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		handleIOAction(ctx, session)
+	}()
+
+	host.SetStreamHandler(protocolID, func(s network.Stream) {
+		wg.Add(1)
+		defer wg.Done()
+
+		peer := s.Conn().RemotePeer()
+		session.AddSession(peer, s.Conn())
+
+		handleStream(s, networkType, forwardPort)
+
+		session.RemoveSession(s.Conn().RemotePeer())
+	})
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	host.SetStreamHandler(protocolID, func(s network.Stream) {
-		session.AddSession(s.Conn().RemotePeer(), s.Conn())
-		handleStream(s, networkType, forwardPort)
-		session.RemoveSession(s.Conn().RemotePeer())
-	})
-
 	sig := <-sigChan
 	log.Printf("Received signal: %v", sig)
 	log.Println("Initiating graceful shutdown...")
-	cleanup(0)
+
+	cleanup()
+
+	log.Println("Shutdown completed.")
 }
 
 func handleStream(s network.Stream, network string, forwardPort int) {

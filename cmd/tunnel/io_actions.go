@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
@@ -31,50 +32,57 @@ type OutputAction struct {
 	Error     string    `json:"error,omitempty"`
 }
 
-func handleIOAction(sessionManager *SessionManager) {
+func handleIOAction(ctx context.Context, sessionManager *SessionManager) {
 	decoder := json.NewDecoder(os.Stdin)
 
+	inputChan := make(chan InputAction)
+	errChan := make(chan error)
+
+	go func() {
+		for {
+			var input InputAction
+			if err := decoder.Decode(&input); err != nil {
+				errChan <- err
+				return
+			}
+			inputChan <- input
+		}
+	}()
+
 	for {
-		var rawInput json.RawMessage
-		err := decoder.Decode(&rawInput)
-		if err != nil {
+		select {
+		case <-ctx.Done():
+			log.Println("IO handler shutting down...")
+			return
+
+		case err := <-errChan:
 			if err.Error() == "EOF" {
 				log.Println("Input stream closed, stopping IO action handler")
 				return
 			}
-
 			log.Printf("Error decoding input action: %v", err)
 			continue
-		}
 
-		var input InputAction
-		err = json.Unmarshal(rawInput, &input)
-		if err != nil {
-			log.Printf("Error unmarshaling input action: %v", err)
-			continue
-		}
+		case input := <-inputChan:
+			switch input.Action {
+			case LIST:
+				sessions := sessionManager.ListSessions()
+				sendOutputAction(OutputAction{
+					Action:   LIST,
+					Sessions: sessions,
+				})
 
-		switch input.Action {
-		case LIST:
-			sessions := sessionManager.ListSessions()
-			output := OutputAction{
-				Action:   LIST,
-				Sessions: sessions,
+			case DISCONNECT:
+				sessionManager.RemoveSession(input.SessionId)
+				log.Printf("Session %s disconnected successfully", input.SessionId)
+				sendOutputAction(OutputAction{
+					Action:    DISCONNECT,
+					SessionId: input.SessionId,
+				})
+
+			default:
+				log.Printf("Unknown action received: %s", input.Action)
 			}
-
-			sendOutputAction(output)
-		case DISCONNECT:
-			sessionManager.RemoveSession(input.SessionId)
-			log.Printf("Session %s disconnected successfully", input.SessionId)
-
-			output := OutputAction{
-				Action:    DISCONNECT,
-				SessionId: input.SessionId,
-			}
-
-			sendOutputAction(output)
-		default:
-			log.Printf("Unknown action received: %s", input.Action)
 		}
 	}
 }
