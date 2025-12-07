@@ -15,6 +15,7 @@ var (
 	CONNECTED  = "CONNECTED"
 	LIST       = "LIST"
 	ERROR      = "ERROR"
+	SHUTDOWN   = "SHUTDOWN"
 )
 
 type InputAction struct {
@@ -32,7 +33,7 @@ type OutputAction struct {
 	Error     string    `json:"error,omitempty"`
 }
 
-func handleIOAction(ctx context.Context, sessionManager *SessionManager) {
+func handleIOAction(ctx context.Context, sessionManager *SessionManager, requestShutdown func(reason string)) {
 	decoder := json.NewDecoder(os.Stdin)
 
 	inputChan := make(chan InputAction)
@@ -66,6 +67,10 @@ func handleIOAction(ctx context.Context, sessionManager *SessionManager) {
 		case input := <-inputChan:
 			switch input.Action {
 			case LIST:
+				if sessionManager == nil {
+					log.Println("LIST action ignored: session management not available in this mode")
+					continue
+				}
 				sessions := sessionManager.ListSessions()
 				sendOutputAction(OutputAction{
 					Action:   LIST,
@@ -73,12 +78,23 @@ func handleIOAction(ctx context.Context, sessionManager *SessionManager) {
 				})
 
 			case DISCONNECT:
+				if sessionManager == nil {
+					log.Println("DISCONNECT action ignored: session management not available in this mode")
+					continue
+				}
 				sessionManager.RemoveSession(input.SessionId)
 				log.Printf("Session %s disconnected successfully", input.SessionId)
 				sendOutputAction(OutputAction{
 					Action:    DISCONNECT,
 					SessionId: input.SessionId,
 				})
+
+			case SHUTDOWN:
+				log.Println("Shutdown action received from stdin")
+				if requestShutdown != nil {
+					requestShutdown("shutdown action from stdin")
+				}
+				return
 
 			default:
 				log.Printf("Unknown action received: %s", input.Action)

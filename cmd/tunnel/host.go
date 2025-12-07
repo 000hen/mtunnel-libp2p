@@ -23,6 +23,17 @@ func runHost(host host.Host, networkType string, forwardPort int) {
 
 	session := NewSessionManager(host.Network())
 
+	shutdownChan := make(chan string, 1)
+	requestShutdown := func(reason string) {
+		if reason == "" {
+			reason = "stdin shutdown request"
+		}
+		select {
+		case shutdownChan <- reason:
+		default:
+		}
+	}
+
 	idht, err := setupDHT(ctx, host, true)
 	if err != nil {
 		cancel()
@@ -87,7 +98,7 @@ func runHost(host host.Host, networkType string, forwardPort int) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		handleIOAction(ctx, session)
+		handleIOAction(ctx, session, requestShutdown)
 	}()
 
 	host.SetStreamHandler(protocolID, func(s network.Stream) {
@@ -105,8 +116,18 @@ func runHost(host host.Host, networkType string, forwardPort int) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	sig := <-sigChan
-	log.Printf("Received signal: %v", sig)
+	var shutdownReason string
+	select {
+	case sig := <-sigChan:
+		shutdownReason = fmt.Sprintf("signal: %v", sig)
+	case reason := <-shutdownChan:
+		shutdownReason = reason
+	}
+
+	if shutdownReason == "" {
+		shutdownReason = "shutdown requested"
+	}
+	log.Printf("Received shutdown trigger (%s)", shutdownReason)
 	log.Println("Initiating graceful shutdown...")
 
 	cleanup()
