@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
@@ -45,10 +46,15 @@ func runClient(host host.Host, token string, localPort int) {
 	info := findPeerInDHT(dhtCtx, clientDHT, decodedToken.ID)
 	dhtCancel()
 
+	var remoteWatcher network.Notifiee
+
 	// cleanup
 	var cleanupOnce sync.Once
 	cleanupTransport := func() {
 		cleanupOnce.Do(func() {
+			if remoteWatcher != nil {
+				host.Network().StopNotify(remoteWatcher)
+			}
 			if err := clientDHT.Close(); err != nil {
 				log.Printf("Error closing DHT: %v", err)
 			}
@@ -80,6 +86,9 @@ func runClient(host host.Host, token string, localPort int) {
 		cleanupTransport()
 		log.Fatalf("Failed to connect to peer %s: %v", decodedToken.ID, err)
 	}
+
+	remoteWatcher = newRemoteDisconnectWatcher(decodedToken.ID, requestShutdown)
+	host.Network().Notify(remoteWatcher)
 
 	// Start listening on the local port
 	listen, err := net.Listen(decodedToken.Network, fmt.Sprintf("localhost:%d", localPort))

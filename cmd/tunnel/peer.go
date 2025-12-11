@@ -19,7 +19,7 @@ func initializePeer() host.Host {
 		libp2p.NATPortMap(),
 		libp2p.EnableAutoNATv2(),
 		libp2p.EnableNATService(),
-		libp2p.ForceReachabilityPrivate(),
+		// libp2p.ForceReachabilityPrivate(),
 	)
 	if err != nil {
 		sendOutputAction(OutputAction{
