@@ -82,7 +82,7 @@ func handleIOAction(ctx context.Context, sessionManager *SessionManager, request
 					log.Println("DISCONNECT action ignored: session management not available in this mode")
 					continue
 				}
-				sessionManager.RemoveSession(input.SessionId)
+				sessionManager.RemoveSession(input.SessionId, true)
 				log.Printf("Session %s disconnected successfully", input.SessionId)
 				sendOutputAction(OutputAction{
 					Action:    DISCONNECT,

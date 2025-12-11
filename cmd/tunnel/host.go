@@ -110,7 +110,7 @@ func runHost(host host.Host, networkType string, forwardPort int) {
 
 		handleStream(s, networkType, forwardPort)
 
-		session.RemoveSession(s.Conn().RemotePeer())
+		session.RemoveSession(s.Conn().RemotePeer(), false)
 	})
 
 	sigChan := make(chan os.Signal, 1)

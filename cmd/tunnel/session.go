@@ -44,7 +44,7 @@ func (sm *SessionManager) AddSession(id peer.ID, conn network.Conn) {
 	})
 }
 
-func (sm *SessionManager) RemoveSession(id peer.ID) {
+func (sm *SessionManager) RemoveSession(id peer.ID, isDisconnect bool) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -53,9 +53,12 @@ func (sm *SessionManager) RemoveSession(id peer.ID) {
 			s.Reset()
 		}
 	}
-	sm.Network.ClosePeer(id)
-	delete(sm.Sessions, id)
 
+	if isDisconnect {
+		sm.Network.ClosePeer(id)
+	}
+
+	delete(sm.Sessions, id)
 	sendOutputAction(OutputAction{
 		Action:    DISCONNECT,
 		SessionId: id,
